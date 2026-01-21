@@ -24,7 +24,14 @@ def is_mkldnn_available():
 
 
 def is_bfloat16_available(device):
+    import paddle
     import paddle.amp
+    import os
+
+    # ROCm: bf16 support is limited (e.g., MIOpen softmax doesn't support bf16)
+    # Default to fp32 on ROCm for stability. Set PADDLEX_ROCM_ENABLE_BF16=1 to enable.
+    if paddle.is_compiled_with_rocm():
+        return os.environ.get("PADDLEX_ROCM_ENABLE_BF16", "0") == "1"
 
     if device is None:
         device = get_default_device()
