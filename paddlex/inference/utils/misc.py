@@ -24,7 +24,13 @@ def is_mkldnn_available():
 
 
 def is_bfloat16_available(device):
+    import paddle
     import paddle.amp
+
+    # ROCm does not have full bfloat16 kernel support (e.g., conv2d)
+    # See: https://github.com/PaddlePaddle/Paddle/issues/XXXXX
+    if paddle.is_compiled_with_rocm():
+        return False
 
     if device is None:
         device = get_default_device()
