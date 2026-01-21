@@ -23,35 +23,9 @@ def is_mkldnn_available():
     return hasattr(Config, "set_mkldnn_cache_capacity")
 
 
-_rocm_attention_patched = False
-
-def _apply_rocm_attention_patch():
-    """Apply ROCm-safe attention patch for bf16 support."""
-    global _rocm_attention_patched
-    if _rocm_attention_patched:
-        return
-    _rocm_attention_patched = True
-    
-    try:
-        from ..models.doc_vlm.modeling.paddleocr_vl._rocm_attention import patch_ernie_attention_for_rocm
-        patch_ernie_attention_for_rocm()
-    except Exception as e:
-        import warnings
-        warnings.warn(f"[ROCm] Failed to apply attention patch: {e}")
-
-
 def is_bfloat16_available(device):
     import paddle
     import paddle.amp
-    import os
-
-    # ROCm: bf16 support requires fp32 softmax workaround
-    # Set PADDLEX_ROCM_ENABLE_BF16=1 to enable bf16 with ROCm-safe attention
-    if paddle.is_compiled_with_rocm():
-        enable_bf16 = os.environ.get("PADDLEX_ROCM_ENABLE_BF16", "0") == "1"
-        if enable_bf16:
-            _apply_rocm_attention_patch()
-        return enable_bf16
 
     if device is None:
         device = get_default_device()
