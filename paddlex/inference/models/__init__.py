@@ -73,10 +73,16 @@ def create_predictor(
         else:
             assert Path(model_dir).exists(), f"{model_dir} is not exists!"
             model_dir = Path(model_dir)
-        config = BasePredictor.load_config(model_dir)
-        assert (
-            model_name == config["Global"]["model_name"]
-        ), f"Model name mismatch，please input the correct model dir."
+        # For HuggingFace format models (e.g., VL models with native backend),
+        # inference.yml may not exist
+        config_path = BasePredictor.get_config_path(model_dir)
+        if config_path.exists():
+            config = BasePredictor.load_config(model_dir)
+            assert (
+                model_name == config["Global"]["model_name"]
+            ), f"Model name mismatch，please input the correct model dir."
+        else:
+            config = None
     else:
         config = None
 

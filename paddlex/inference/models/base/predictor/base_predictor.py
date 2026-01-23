@@ -124,7 +124,13 @@ class BasePredictor(
                     "`model_dir` should not be `None`, as a local model is needed."
                 )
             self.model_dir = Path(model_dir)
-            self.config = config if config else self.load_config(self.model_dir)
+            # For HuggingFace format models, config file may not exist
+            if config is not None:
+                self.config = config
+            elif self.get_config_path(self.model_dir).exists():
+                self.config = self.load_config(self.model_dir)
+            else:
+                self.config = None
             self._use_local_model = True
         else:
             if model_dir is not None:
