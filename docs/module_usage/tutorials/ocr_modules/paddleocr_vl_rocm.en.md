@@ -6,11 +6,9 @@ This guide explains how to deploy PaddleOCR-VL (versions 1.0 and 1.5) on AMD ROC
 
 - [Prerequisites](#prerequisites)
 - [Environment Setup](#environment-setup)
-- [Model Preparation](#model-preparation)
 - [Running PaddleOCR-VL with Native Backend](#running-paddleocr-vl-with-native-backend)
 - [Running PaddleOCR-VL with vLLM Backend](#running-paddleocr-vl-with-vllm-backend)
 - [Configuration Reference](#configuration-reference)
-- [Troubleshooting](#troubleshooting)
 
 ## Prerequisites
 
@@ -19,33 +17,88 @@ This guide explains how to deploy PaddleOCR-VL (versions 1.0 and 1.5) on AMD ROC
 - PaddlePaddle compiled with ROCm support
 - vLLM compiled with ROCm support (for vLLM backend)
 
-## Environment Setup
-
-### 1. Install PaddlePaddle for ROCm
-
-Install PaddlePaddle with ROCm support. You can either:
-
-**Option A: Install from pre-built wheel**
+### Verify ROCm Installation
 
 ```bash
-pip install paddlepaddle-rocm -f https://www.paddlepaddle.org.cn/whl/rocm/stable.html
+# Check ROCm version
+cat /opt/rocm/.info/version
+# Expected: 7.0.0-17483
+
+# Verify GPU detection
+rocm-smi
 ```
 
-**Option B: Build from source**
+## Environment Setup
+
+### 1. Build and Install PaddlePaddle for ROCm
+
+#### Clone the Patched Paddle Repository
 
 ```bash
-git clone https://github.com/PaddlePaddle/Paddle.git
+git clone -b dev_amd https://github.com/vivienfanghuagood/Paddle.git
 cd Paddle
+```
+
+#### Create Python Virtual Environment
+
+```bash
+python3 -m venv /opt/venv
+source /opt/venv/bin/activate
+pip install --upgrade pip
+pip install numpy protobuf pyyaml requests
+```
+
+#### Configure Build
+
+```bash
 mkdir build && cd build
-cmake .. -DPY_VERSION=3.10 -DWITH_ROCM=ON -DWITH_TESTING=OFF
+
+cmake .. \
+    -DPY_VERSION=3.10 \
+    -DPYTHON_EXECUTABLE=/opt/venv/bin/python \
+    -DWITH_ROCM=ON \
+    -DON_INFER=ON \
+    -DWITH_TESTING=OFF \
+    -DWITH_XBYAK=OFF
+```
+
+#### Build Paddle
+
+```bash
+# Use appropriate number of parallel jobs based on your system
 make -j$(nproc)
-pip install python/dist/paddlepaddle*.whl
+```
+
+> **Note:** The build may take 1-2 hours depending on your system.
+
+#### Install Paddle
+
+```bash
+pip install python/dist/paddlepaddle_rocm*.whl
+```
+
+#### Verify Installation
+
+```bash
+python -c "
+import paddle
+print('Paddle version:', paddle.__version__)
+print('ROCm compiled:', paddle.is_compiled_with_rocm())
+print('GPU available:', paddle.device.is_compiled_with_cuda())
+"
+```
+
+Expected output:
+```
+Paddle version: 0.0.0
+ROCm compiled: True
+GPU available: True
 ```
 
 ### 2. Install PaddleX
 
 ```bash
-git clone https://github.com/PaddlePaddle/PaddleX.git
+git clone -b dev_rocm70 https://github.com/vivienfanghuagood/PaddleX.git
 cd PaddleX
 pip install -e ".[ocr]"
 ```
@@ -56,23 +109,7 @@ pip install -e ".[ocr]"
 pip install vllm  # Make sure it's the ROCm version
 ```
 
-## Model Preparation
-
-### Download Models
-
-Download the required models:
-
-```bash
-cd /path/to/PaddleX
-
-# Download layout detection model (PP-DocLayoutV3)
-wget https://paddle-model-ecology.bj.bcebos.com/paddlex/PaddleX3.0/deploy/internal/tmp/layout_0116.tar
-tar -xvf layout_0116.tar
-
-# Download VL model (PaddleOCR-VL-1.5-0.9B)
-wget https://paddle-model-ecology.bj.bcebos.com/paddlex/PaddleX3.0/deploy/tmp/checkpoint-5000.tar
-tar -xvf checkpoint-5000.tar
-```
+## Running PaddleOCR-VL with Native Backend
 
 ### Generate Pipeline Configuration
 
@@ -81,8 +118,6 @@ paddlex --get_pipeline_config PaddleOCR-VL-1.5
 ```
 
 This creates `PaddleOCR-VL-1.5.yaml` in the current directory.
-
-## Running PaddleOCR-VL with Native Backend
 
 ### Configuration for Native Backend
 
@@ -237,66 +272,6 @@ paddlex --pipeline PaddleOCR-VL-vllm.yaml --input your_image.png
 | `--host` | Server host address | `localhost` |
 | `--port` | Server port | `8000` |
 
-## Troubleshooting
-
-### Issue: `fused_conv2d_add_act` kernel not registered
-
-**Symptom:**
-```
-RuntimeError: (NotFound) The kernel `fused_conv2d_add_act` is not registered.
-```
-
-**Solution:** This is a ROCm compatibility issue. The fix is included in this version of PaddleX. If you encounter this error, ensure you're using the latest code that includes the ROCm-specific pass deletion:
-
-```python
-# In paddlex/inference/models/common/static_infer.py
-if paddle.is_compiled_with_rocm():
-    config.delete_pass("conv2d_add_act_fuse_pass")
-    config.delete_pass("conv2d_add_fuse_pass")
-```
-
-### Issue: GPU Memory Access Fault
-
-**Symptom:**
-```
-Memory access fault by GPU node-1
-```
-
-**Solution:** This is caused by MIOpen bf16 convolution bugs on ROCm. The fix keeps the visual encoder modules in fp32 precision. Ensure the `_keep_in_fp32_modules` attribute is set in the model class:
-
-```python
-class PaddleOCRVLForConditionalGeneration(Ernie4_5PretrainedModel):
-    _keep_in_fp32_modules = ["visual", "mlp_AR"]
-```
-
-### Issue: ImportError when running from subdirectory
-
-**Symptom:**
-```
-ImportError: cannot import name 'create_pipeline' from 'paddlex'
-```
-
-**Solution:** Always run PaddleX commands from the PaddleX root directory, not from subdirectories like `test/`.
-
-```bash
-# Correct
-cd /path/to/PaddleX
-paddlex --pipeline config.yaml --input test/image.png
-
-# Incorrect
-cd /path/to/PaddleX/test
-paddlex --pipeline ../config.yaml --input image.png
-```
-
-### Issue: `inference.yml` not found for HuggingFace models
-
-**Symptom:**
-```
-FileNotFoundError: No such file or directory: 'checkpoint-5000/inference.yml'
-```
-
-**Solution:** This is expected for HuggingFace-format models. The fix gracefully handles missing `inference.yml` files. Ensure you're using the latest code.
-
 ## Performance Comparison
 
 | Backend | Typical Latency | Notes |
@@ -311,4 +286,3 @@ vLLM backend is recommended for production deployments due to better throughput 
 - [PaddleOCR-VL Official Documentation](https://www.paddleocr.ai/main/version3.x/pipeline_usage/PaddleOCR-VL.html)
 - [PaddlePaddle ROCm Installation Guide](https://www.paddlepaddle.org.cn/documentation/docs/zh/guides/hardware_support/rocm_docs/paddle_install_cn.html)
 - [vLLM Documentation](https://docs.vllm.ai/)
-
